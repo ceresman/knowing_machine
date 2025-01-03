@@ -1,126 +1,163 @@
-import { useState, useEffect, useRef } from 'react'
-import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion'
+import { useState, useRef, useEffect } from 'react'
+import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion'
 
-interface ImageViewerProps {
-  initialZoom?: number
-  initialPosition?: { x: number; y: number }
+interface ViewportState {
+  scale: number;
+  x: number;
+  y: number;
 }
 
-export const ImageViewer: React.FC<ImageViewerProps> = ({ 
-  initialZoom = 1,
-  initialPosition = { x: 0, y: 0 }
-}) => {
-  const [scale, setScale] = useState(initialZoom)
-  const [position, setPosition] = useState(initialPosition)
-  const containerRef = useRef<HTMLDivElement>(null)
-  
-  const x = useMotionValue(position.x)
-  const y = useMotionValue(position.y)
-  
-  // Update URL parameters when position or zoom changes
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    params.set('pos', `${position.x.toFixed(2)},${position.y.toFixed(2)},${scale.toFixed(4)}`)
-    window.history.replaceState({}, '', `?${params.toString()}`)
-  }, [position, scale])
+export const ImageViewer: React.FC = () => {
+  const [viewport, setViewport] = useState<ViewportState>({
+    scale: 1,
+    x: 0,
+    y: 0,
+  });
 
-  // Initialize from URL parameters
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const pos = params.get('pos')
-    if (pos) {
-      const [x, y, zoom] = pos.split(',').map(Number)
-      if (!isNaN(x) && !isNaN(y) && !isNaN(zoom)) {
-        setPosition({ x, y })
-        setScale(zoom)
-      }
-    }
-  }, [])
+  const containerRef = useRef<HTMLDivElement>(null);
+  const scale = useMotionValue(1);
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+
+  const smoothScale = useSpring(scale, {
+    stiffness: 300,
+    damping: 30,
+    mass: 0.5,
+  });
+
+  const smoothX = useSpring(x, {
+    stiffness: 300,
+    damping: 30,
+    mass: 0.5,
+  });
+
+  const smoothY = useSpring(y, {
+    stiffness: 300,
+    damping: 30,
+    mass: 0.5,
+  });
 
   const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault()
-    const delta = -e.deltaY * 0.01
-    const newScale = Math.min(Math.max(scale + delta, 0.5), 2)
-    setScale(newScale)
-  }
+    e.preventDefault();
+    const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    const newScale = Math.min(Math.max(viewport.scale * scaleFactor, 0.1), 5);
+    
+    setViewport(prev => ({
+      ...prev,
+      scale: newScale,
+    }));
+    scale.set(newScale);
+  };
+
+  const handleDrag = (_: any, info: any) => {
+    const newX = viewport.x + info.delta.x;
+    const newY = viewport.y + info.delta.y;
+    
+    setViewport(prev => ({
+      ...prev,
+      x: newX,
+      y: newY,
+    }));
+    
+    x.set(newX);
+    y.set(newY);
+  };
+
+  const resetView = () => {
+    setViewport({ scale: 1, x: 0, y: 0 });
+    scale.set(1);
+    x.set(0);
+    y.set(0);
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (container) {
+      container.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
+      return () => {
+        container.removeEventListener('wheel', (e) => e.preventDefault());
+      };
+    }
+  }, []);
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-      className="space-y-4"
+    <div 
+      ref={containerRef}
+      className="fixed inset-0 overflow-hidden bg-gray-900"
+      onWheel={handleWheel}
     >
-      <motion.div
-        layout
-        transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-        className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">Zoom: {scale.toFixed(2)}x</span>
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => setScale(Math.min(scale + 0.1, 2))}
-            className="px-3 py-1 rounded-lg border border-gray-300 bg-white text-sm"
-          >
-            +
-          </motion.button>
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => setScale(Math.max(scale - 0.1, 0.5))}
-            className="px-3 py-1 rounded-lg border border-gray-300 bg-white text-sm"
-          >
-            -
-          </motion.button>
-        </div>
-      </motion.div>
-      
-      <motion.div
-        layout
-        transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-        className="bg-white rounded-lg shadow-md"
-      >
+      <AnimatePresence>
         <motion.div
-          ref={containerRef}
-          layout
-          transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
-          className="relative w-full h-48 sm:h-64 md:h-96 lg:h-screen lg:max-h-[80vh] overflow-hidden"
-          onWheel={handleWheel}
+          className="w-full h-full relative"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ 
+            duration: 0.5,
+            ease: [0.4, 0, 0.2, 1]
+          }}
         >
-          <AnimatePresence mode="wait">
-            <motion.div
-              style={{
-                x,
-                y,
-                scale,
+          <motion.div
+            className="absolute left-1/2 top-1/2 origin-center cursor-grab active:cursor-grabbing"
+            drag
+            dragMomentum={false}
+            onDrag={handleDrag}
+            style={{
+              scale: smoothScale,
+              x: smoothX,
+              y: smoothY,
+            }}
+          >
+            <motion.img
+              src="/images/merged_visualization.png"
+              alt="Complete Visualization"
+              className="max-w-none transform -translate-x-1/2 -translate-y-1/2"
+              draggable={false}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{
+                duration: 0.5,
+                ease: [0.4, 0, 0.2, 1]
               }}
-              drag
-              dragConstraints={containerRef}
-              dragElastic={0.1}
-              dragMomentum={false}
-              onDragEnd={(_, info) => {
-                setPosition({
-                  x: x.get(),
-                  y: y.get(),
-                })
-              }}
-              className="absolute inset-0 cursor-grab active:cursor-grabbing"
-            >
-              <motion.img
-                src="/scripts/processed/complete_visualization.png"
-                alt="Complete Visualization"
-                className="w-full h-auto object-contain origin-center"
-                style={{
-                  maxWidth: 'none',
-                  willChange: 'transform',
-                }}
-              />
-            </motion.div>
-          </AnimatePresence>
+            />
+          </motion.div>
         </motion.div>
-      </motion.div>
-    </motion.div>
-  )
+      </AnimatePresence>
+
+      <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 flex gap-2 bg-black/50 p-2 rounded-lg">
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+          onClick={() => {
+            const newScale = Math.min(viewport.scale * 1.2, 5);
+            setViewport(prev => ({ ...prev, scale: newScale }));
+            scale.set(newScale);
+          }}
+        >
+          Zoom In
+        </motion.button>
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+          onClick={() => {
+            const newScale = Math.max(viewport.scale * 0.8, 0.1);
+            setViewport(prev => ({ ...prev, scale: newScale }));
+            scale.set(newScale);
+          }}
+        >
+          Zoom Out
+        </motion.button>
+        <motion.button
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+          onClick={resetView}
+        >
+          Reset
+        </motion.button>
+      </div>
+    </div>
+  );
 }
