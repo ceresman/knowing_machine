@@ -14,12 +14,12 @@ class TileTask:
     future: Optional[Future] = None
     success: bool = False
 
-BASE_URL = "https://tiles.calculatingempires.net/tiles_directory_black_10"
+BASE_URL = "https://tiles.calculatingempires.net/tiles_directory_black_{zoom}"
 OUTPUT_DIR = Path("downloaded_tiles")
 
 def download_tile(zoom: int, x: int, y: int) -> bool:
     """Download a single tile and save it to the appropriate directory."""
-    url = f"{BASE_URL}/{zoom}/{x}/{y}.png"
+    url = f"{BASE_URL.format(zoom=zoom)}/{zoom}/{x}/{y}.png"
     output_path = OUTPUT_DIR / str(zoom) / str(x)
     output_file = output_path / f"{y}.png"
     
@@ -43,8 +43,11 @@ def download_tile(zoom: int, x: int, y: int) -> bool:
 def calculate_tile_range(zoom: int) -> tuple[range, range]:
     """Calculate the x,y ranges for a given zoom level."""
     # Each zoom level doubles the number of tiles in each dimension
-    size = 2 ** (zoom - 5)  # Using zoom 5 as base
-    return range(0, size * 20), range(0, size * 20)
+    # For zoom level 1, we start with a small range and increase exponentially
+    size = 2 ** (zoom - 1)  # Using zoom 1 as base
+    # Adjust the base size to be more conservative
+    base_size = 4  # Start with a small base size
+    return range(0, size * base_size), range(0, size * base_size)
 
 def get_progress_file(zoom: int) -> Path:
     """Get the progress file path for a zoom level."""
@@ -66,7 +69,7 @@ def load_progress(zoom: int) -> tuple[int, int]:
 
 def check_tile_exists(zoom: int, x: int, y: int) -> bool:
     """Check if a tile exists at the given coordinates."""
-    url = f"{BASE_URL}/{zoom}/{x}/{y}.png"
+    url = f"{BASE_URL.format(zoom=zoom)}/{zoom}/{x}/{y}.png"
     try:
         response = requests.head(url, timeout=5)
         return response.status_code == 200
@@ -161,7 +164,7 @@ def download_zoom_level(zoom: int):
 
 def get_last_completed_zoom() -> int:
     """Get the last completed zoom level from the downloaded files."""
-    completed = 4  # Start from zoom level 4
+    completed = 0  # Start from zoom level 0
     for zoom in range(5, 16):
         zoom_dir = OUTPUT_DIR / str(zoom)
         if zoom_dir.exists() and any(zoom_dir.iterdir()):
@@ -174,9 +177,9 @@ def main():
     """Main function to download all tiles."""
     OUTPUT_DIR.mkdir(exist_ok=True)
     
-    # Resume from the last completed zoom level
-    start_zoom = get_last_completed_zoom() + 1
-    zoom_levels = range(start_zoom, 16)  # Include zoom level 15
+    # Start from zoom level 1 and go up to 10
+    start_zoom = max(1, get_last_completed_zoom() + 1)
+    zoom_levels = range(start_zoom, 11)  # Include up to zoom level 10
     
     for zoom in zoom_levels:
         print(f"Downloading zoom level {zoom}")
