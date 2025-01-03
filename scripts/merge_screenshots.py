@@ -34,8 +34,8 @@ def normalize_coordinates(x: float, y: float, bounds: Tuple[float, float, float,
     """Convert world coordinates to pixel coordinates."""
     min_x, min_y, max_x, max_y = bounds
     # Scale factor to convert coordinate units to pixels
-    x_scale = 1504 / (max_x - min_x)  # viewport width
-    y_scale = 869 / (max_y - min_y)   # viewport height
+    x_scale = 1976 / (max_x - min_x)  # canvas width
+    y_scale = 2114 / (max_y - min_y)  # canvas height
     
     pixel_x = int((x - min_x) * x_scale)
     pixel_y = int((y - min_y) * y_scale)
@@ -50,8 +50,8 @@ def merge_screenshots(screenshots_dir: str, output_path: str):
     # Calculate final image dimensions
     x_range = max_x - min_x
     y_range = max_y - min_y
-    x_scale = 1504 / x_range  # viewport width
-    y_scale = 869 / y_range   # viewport height
+    x_scale = 1976 / x_range  # canvas width
+    y_scale = 2114 / y_range  # canvas height
     
     width = int(x_range * x_scale)
     height = int(y_range * y_scale)
