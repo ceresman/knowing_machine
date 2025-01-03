@@ -8,18 +8,18 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# Coordinate system bounds from analysis
-X_MIN, X_MAX = 788, 158465
-Y_MIN, Y_MAX = 2067.23, 15742.12
+# Coordinate system bounds from corner analysis
+X_MIN, X_MAX = 4079.86, 156900.14  # leftup x, rightdown x
+Y_MIN, Y_MAX = 2793.01, 14209.55   # rightdown y, leftup y
 ZOOM_LEVEL = 14.8544
 
-# Viewport dimensions (based on browser window size)
-VIEWPORT_WIDTH = 1504
-VIEWPORT_HEIGHT = 869
+# Viewport dimensions (based on canvas size)
+VIEWPORT_WIDTH = 1976
+VIEWPORT_HEIGHT = 2114
 
-# Calculate step sizes with 25% overlap
-X_STEP = int(VIEWPORT_WIDTH * 0.75)  # 75% of viewport width for 25% overlap
-Y_STEP = int(VIEWPORT_HEIGHT * 0.75)  # 75% of viewport height for 25% overlap
+# Calculate step sizes with 30% overlap for safety
+X_STEP = int(VIEWPORT_WIDTH * 0.7)  # 70% of viewport width for 30% overlap
+Y_STEP = int(VIEWPORT_HEIGHT * 0.7)  # 70% of viewport height for 30% overlap
 
 # Corner viewports for verification
 CORNER_VIEWPORTS = [
