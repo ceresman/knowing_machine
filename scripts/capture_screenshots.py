@@ -8,14 +8,25 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# Define the viewport coordinates and zoom levels
-VIEWPORTS = [
+# Coordinate system bounds from corner analysis
+X_MIN, X_MAX = 4079.86, 156900.14  # leftup x, rightdown x
+Y_MIN, Y_MAX = 2793.01, 14209.55   # rightdown y, leftup y
+ZOOM_LEVEL = 14.8544
+
+# Viewport dimensions (based on canvas size)
+VIEWPORT_WIDTH = 1976
+VIEWPORT_HEIGHT = 2114
+
+# Calculate step sizes with 30% overlap for safety
+X_STEP = int(VIEWPORT_WIDTH * 0.7)  # 70% of viewport width for 30% overlap
+Y_STEP = int(VIEWPORT_HEIGHT * 0.7)  # 70% of viewport height for 30% overlap
+
+# Corner viewports for verification
+CORNER_VIEWPORTS = [
     # Format: (x, y, zoom, description)
     (156900.14, 2793.01, 14.8544, "rightdown"),
     (4079.86, 14209.55, 14.8544, "leftup"),
 ]
-
-ZOOM_LEVELS = [14.8544]  # Add more zoom levels if needed
 
 # Output directory for screenshots
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
@@ -25,8 +36,9 @@ def setup_driver():
     """Set up Chrome driver with appropriate options."""
     chrome_options = Options()
     chrome_options.add_argument("--headless")  # Run in headless mode
-    chrome_options.add_argument("--window-size=3840,2160")  # Set window size
+    chrome_options.add_argument(f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}")  # Set exact viewport size
     chrome_options.add_argument("--hide-scrollbars")  # Hide scrollbars
+    chrome_options.add_argument("--force-device-scale-factor=1")  # Ensure 1:1 pixel ratio
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
 def capture_screenshot(driver, x, y, zoom, description):
@@ -51,10 +63,31 @@ def main():
     driver = setup_driver()
     
     try:
-        # Capture screenshots for each viewport at specified zoom levels
-        for x, y, zoom, desc in VIEWPORTS:
-            filepath = capture_screenshot(driver, x, y, zoom, desc)
-            print(f"Saved screenshot to: {filepath}")
+        # Calculate number of steps needed
+        x_steps = int((X_MAX - X_MIN) / (VIEWPORT_WIDTH * 0.75)) + 1
+        y_steps = int((Y_MAX - Y_MIN) / (VIEWPORT_HEIGHT * 0.75)) + 1
+        
+        print(f"Starting systematic capture: {x_steps}x{y_steps} grid")
+        
+        # Capture screenshots with systematic coverage
+        index = 0
+        for i in range(x_steps):
+            x = X_MIN + (i * X_STEP)
+            for j in range(y_steps):
+                y = Y_MIN + (j * Y_STEP)
+                filepath = capture_screenshot(driver, x, y, ZOOM_LEVEL, f"grid_{i}_{j}")
+                print(f"Captured grid position ({i},{j}) at {filepath}")
+                time.sleep(1)  # Prevent overwhelming the server
+                index += 1
+        
+        # Capture the specific corner positions for verification
+        print("\nCapturing corner viewports for verification...")
+        for x, y, zoom, desc in CORNER_VIEWPORTS:
+            filepath = capture_screenshot(driver, x, y, zoom, f"corner_{desc}")
+            print(f"Captured corner viewport: {filepath}")
+            time.sleep(1)
+            
+        print(f"\nCapture complete. Total screenshots: {index + len(CORNER_VIEWPORTS)}")
             
     finally:
         driver.quit()
