@@ -10,6 +10,129 @@ from webdriver_manager.chrome import ChromeDriverManager
 from PIL import Image
 import time
 
+def verify_canvas_at_position(driver, x, y, zoom):
+    """Verify canvas properties at a specific position and zoom level."""
+    url = f"https://calculatingempires.net/?pos={x},{y},{zoom}"
+    print(f"\nVerifying canvas at {url}")
+    driver.get(url)
+    
+    # Wait for map initialization
+    WebDriverWait(driver, 30).until(
+        lambda d: d.execute_script("return typeof window.map !== 'undefined' && window.map.getView() !== null")
+    )
+    
+    # Get canvas element and wait for it to stabilize
+    canvas = WebDriverWait(driver, 20).until(
+        EC.presence_of_element_located((By.TAG_NAME, "canvas"))
+    )
+    time.sleep(5)
+    
+    # Force map update
+    driver.execute_script("""
+        window.map.updateSize();
+        window.map.render();
+        return new Promise(resolve => setTimeout(resolve, 2000));
+    """)
+    
+    # Get canvas properties
+    props = driver.execute_script("""
+        const canvas = document.querySelector('canvas');
+        const computed = window.getComputedStyle(canvas);
+        return {
+            dimensions: {
+                width: canvas.width,
+                height: canvas.height
+            },
+            transform: computed.transform,
+            transformOrigin: computed.transformOrigin
+        };
+    """)
+    
+    return props
+
+def verify_tile_completeness():
+    """Verify that all required tiles are downloaded and not corrupted."""
+    print("\nVerifying tile completeness...")
+    
+    tiles_dir = 'downloaded_tiles'
+    if not os.path.exists(tiles_dir):
+        print("\n❌ Tiles directory not found")
+        return False
+    
+    try:
+        # Get all zoom levels
+        zoom_levels = sorted([d for d in os.listdir(tiles_dir) if os.path.isdir(os.path.join(tiles_dir, d))])
+        if not zoom_levels:
+            print("\n❌ No zoom levels found")
+            return False
+        
+        total_tiles = 0
+        corrupted_tiles = 0
+        missing_tiles = 0
+        
+        # Expected zoom levels
+        expected_zooms = []
+        current_zoom = 12.4515
+        while current_zoom <= 18.0000:
+            expected_zooms.append(str(int(current_zoom)))
+            current_zoom += 0.66
+        
+        # Check for missing zoom levels
+        missing_zooms = set(expected_zooms) - set(zoom_levels)
+        if missing_zooms:
+            print(f"\n❌ Missing zoom levels: {sorted(missing_zooms)}")
+            return False
+        
+        for zoom in zoom_levels:
+            zoom_dir = os.path.join(tiles_dir, zoom)
+            x_dirs = [d for d in os.listdir(zoom_dir) if os.path.isdir(os.path.join(zoom_dir, d))]
+            
+            for x_dir in x_dirs:
+                x_path = os.path.join(zoom_dir, x_dir)
+                y_files = [f for f in os.listdir(x_path) if f.endswith('.png')]
+                
+                # Calculate expected tile range for this zoom level
+                z = int(zoom)
+                expected_x_range = range(0, 2**z)
+                expected_y_range = range(0, 2**z)
+                
+                # Check for missing tiles
+                for x in expected_x_range:
+                    for y in expected_y_range:
+                        tile_name = f"{y}.png"
+                        tile_path = os.path.join(x_path, tile_name)
+                        
+                        if not os.path.exists(tile_path):
+                            print(f"\n❌ Missing tile: zoom={zoom}, x={x}, y={y}")
+                            missing_tiles += 1
+                            continue
+                        
+                        total_tiles += 1
+                        
+                        # Verify tile integrity
+                        try:
+                            with Image.open(tile_path) as img:
+                                img.verify()
+                        except Exception as e:
+                            print(f"\n❌ Corrupted tile: {tile_path}")
+                            print(f"Error: {str(e)}")
+                            corrupted_tiles += 1
+        
+        if missing_tiles > 0:
+            print(f"\n❌ Found {missing_tiles} missing tiles")
+            return False
+            
+        if corrupted_tiles > 0:
+            print(f"\n❌ Found {corrupted_tiles} corrupted tiles out of {total_tiles}")
+            return False
+        
+        print(f"\n✅ All {total_tiles} tiles verified successfully")
+        return True
+        
+    except Exception as e:
+        print(f"\n❌ Failed to verify tiles: {str(e)}")
+        return False
+
 def verify_live_canvas():
     """Verify canvas properties directly from the webpage with robust initialization checks."""
     print("\nVerifying live canvas properties...")
@@ -18,121 +141,187 @@ def verify_live_canvas():
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=2500,2500')  # Larger window to ensure full canvas visibility
+    options.add_argument('--window-size=1976,2114')  # Match expected canvas size
     options.add_argument('--disable-gpu')
-    options.add_argument('--disable-web-security')  # Allow cross-origin requests
-    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-web-security')
     options.set_capability('goog:loggingPrefs', {'browser': 'ALL'})
     
-    # Add timeout configuration
-    PAGE_LOAD_TIMEOUT = 30
-    SCRIPT_TIMEOUT = 30
-    IMPLICIT_WAIT = 10
+    try:
+        service = Service(ChromeDriverManager().install())
+        with webdriver.Chrome(service=service, options=options) as driver:
+            # Test corner positions
+            corners = {
+                'leftup': {'x': 4079.86, 'y': 14209.55, 'z': 14.8544},
+                'rightdown': {'x': 156900.14, 'y': 2793.01, 'z': 14.8544}
+            }
+            
+            # Test zoom levels
+            zoom_levels = []
+            current_zoom = 12.4515
+            while current_zoom <= 18.0000:
+                zoom_levels.append(current_zoom)
+                current_zoom += 0.66
+            
+            # Verify corners
+            for corner, pos in corners.items():
+                print(f"\nTesting {corner} corner...")
+                props = verify_canvas_at_position(driver, pos['x'], pos['y'], pos['z'])
+                
+                # Verify dimensions with 5% tolerance
+                dims = props['dimensions']
+                width_tolerance = abs(dims['width'] - 1976) / 1976
+                height_tolerance = abs(dims['height'] - 2114) / 2114
+                
+                if width_tolerance > 0.05 or height_tolerance > 0.05:
+                    print(f"\n❌ Canvas dimensions outside tolerance for {corner}:")
+                    print(f"Expected: 1976x2114")
+                    print(f"Got: {dims['width']}x{dims['height']}")
+                    return False
+                
+                # Verify transform matrix
+                if not props['transform'].startswith('matrix(0.5, 0, 0, 0.5'):
+                    print(f"\n❌ Transform matrix incorrect for {corner}:")
+                    print(f"Expected to start with: matrix(0.5, 0, 0, 0.5")
+                    print(f"Got: {props['transform']}")
+                    return False
+            
+            # Verify zoom levels
+            print("\nTesting zoom levels...")
+            for zoom in zoom_levels:
+                print(f"\nTesting zoom level {zoom}...")
+                props = verify_canvas_at_position(driver, 93000.24, 8725.00, zoom)
+                
+                # Verify dimensions with 5% tolerance
+                dims = props['dimensions']
+                width_tolerance = abs(dims['width'] - 1976) / 1976
+                height_tolerance = abs(dims['height'] - 2114) / 2114
+                
+                if width_tolerance > 0.05 or height_tolerance > 0.05:
+                    print(f"\n❌ Canvas dimensions outside tolerance for zoom {zoom}:")
+                    print(f"Expected: 1976x2114")
+                    print(f"Got: {dims['width']}x{dims['height']}")
+                    return False
+                
+                # Verify transform matrix
+                if not props['transform'].startswith('matrix(0.5, 0, 0, 0.5'):
+                    print(f"\n❌ Transform matrix incorrect for zoom {zoom}:")
+                    print(f"Expected to start with: matrix(0.5, 0, 0, 0.5")
+                    print(f"Got: {props['transform']}")
+                    return False
+            
+            print("\n✅ All zoom levels verified successfully")
+            print("\n✅ All canvas properties verified successfully")
+            return True
+            
+    except Exception as e:
+        print(f"\n❌ Live verification failed: {str(e)}")
+        return False
     
     try:
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         
-        print("Navigating to page...")
-        driver.get('https://calculatingempires.net/')
+        # Test corner positions
+        corners = {
+            'leftup': {'x': 4079.86, 'y': 14209.55, 'z': 14.8544},
+            'rightdown': {'x': 156900.14, 'y': 2793.01, 'z': 14.8544}
+        }
         
-        print("Waiting for canvas initialization...")
-        max_retries = 30
-        retry_count = 0
-        result = None
+        # Test zoom levels
+        zoom_levels = []
+        current_zoom = 12.4515
+        while current_zoom <= 18.0000:
+            zoom_levels.append(current_zoom)
+            current_zoom += 0.66
         
-        while retry_count < max_retries and not result:
-            try:
-                # Wait for canvas presence
-                canvas = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "canvas"))
-                )
+        # Verify corners
+        corner_results = {}
+        for corner, pos in corners.items():
+            print(f"\nTesting {corner} corner...")
+            props = verify_canvas_at_position(driver, pos['x'], pos['y'], pos['z'])
+            corner_results[corner] = props
+            
+            # Verify dimensions with 5% tolerance
+            dims = props['dimensions']
+            width_tolerance = abs(dims['width'] - 1976) / 1976
+            height_tolerance = abs(dims['height'] - 2114) / 2114
+            
+            if width_tolerance > 0.05 or height_tolerance > 0.05:
+                print(f"\n❌ Canvas dimensions outside tolerance for {corner}:")
+                print(f"Expected: 1976x2114")
+                print(f"Got: {dims['width']}x{dims['height']}")
+                return False
+            
+            # Verify transform matrix
+            if not props['transform'].startswith('matrix(0.5, 0, 0, 0.5'):
+                print(f"\n❌ Transform matrix incorrect for {corner}:")
+                print(f"Expected to start with: matrix(0.5, 0, 0, 0.5")
+                print(f"Got: {props['transform']}")
+                return False
+        
+        # Verify zoom levels
+        print("\nTesting zoom levels...")
+        for zoom in zoom_levels:
+            print(f"\nTesting zoom level {zoom}...")
+            props = verify_canvas_at_position(driver, 93000.24, 8725.00, zoom)
+            print(f"Zoom {zoom} properties:", json.dumps(props, indent=2))
                 
-                # Get detailed canvas properties with verification
+            # Verify zoom levels
+            print("\nTesting zoom levels...")
+            zoom_results = {}
+            for zoom in zoom_levels:
+                print(f"\nTesting zoom level {zoom}...")
+                props = verify_canvas_at_position(driver, 93000.24, 8725.00, zoom)
+                zoom_results[zoom] = props
+                
+                # Verify dimensions with 5% tolerance
+                dims = props['dimensions']
+                width_tolerance = abs(dims['width'] - 1976) / 1976
+                height_tolerance = abs(dims['height'] - 2114) / 2114
+                
+                if width_tolerance > 0.05 or height_tolerance > 0.05:
+                    print(f"\n❌ Canvas dimensions outside tolerance for zoom {zoom}:")
+                    print(f"Expected: 1976x2114")
+                    print(f"Got: {dims['width']}x{dims['height']}")
+                    return False
+                
+                # Verify transform matrix
+                if not props['transform'].startswith('matrix(0.5, 0, 0, 0.5'):
+                    print(f"\n❌ Transform matrix incorrect for zoom {zoom}:")
+                    print(f"Expected to start with: matrix(0.5, 0, 0, 0.5")
+                    print(f"Got: {props['transform']}")
+                    return False
+            
+            print("\n✅ All zoom levels verified successfully")
+            print("\n✅ All canvas properties verified successfully")
+            return True
+                
+                # Get basic canvas properties
                 result = driver.execute_script("""
-                    return new Promise((resolve) => {
-                        const checkProperties = () => {
-                            const canvas = document.querySelector('canvas');
-                            if (!canvas) return null;
-                            
-                            const style = window.getComputedStyle(canvas);
-                            const props = {
-                                dimensions: {
-                                    width: canvas.width,
-                                    height: canvas.height,
-                                    clientWidth: canvas.clientWidth,
-                                    clientHeight: canvas.clientHeight
-                                },
-                                transform: {
-                                    style: canvas.style.transform,
-                                    computed: style.transform,
-                                    origin: style.transformOrigin
-                                },
-                                style: {
-                                    position: style.position,
-                                    left: style.left,
-                                    top: style.top
-                                },
-                                map: {
-                                    initialized: typeof window.map !== 'undefined',
-                                    zoom: window.map ? window.map.getView().getZoom() : null,
-                                    center: window.map ? window.map.getView().getCenter() : null
-                                }
-                            };
-                            
-                            // Check if properties match requirements
-                            if (props.dimensions.width === 1976 && 
-                                props.dimensions.height === 2114 && 
-                                props.transform.computed === 'matrix(0.5, 0, 0, 0.5, 0, 0)' &&
-                                props.map.initialized) {
-                                resolve(props);
-                                return;
-                            }
-                            
-                            console.log('Waiting for correct canvas properties...');
-                            console.log('Current:', JSON.stringify(props, null, 2));
-                            setTimeout(checkProperties, 1000);
-                        };
-                        
-                        checkProperties();
-                    });
+                    const canvas = document.querySelector('canvas');
+                    const style = window.getComputedStyle(canvas);
+                    return {
+                        dimensions: {
+                            width: canvas.width,
+                            height: canvas.height
+                        },
+                        transform: style.transform
+                    };
                 """)
                 
-                if result:
-                    break
+                if not result:
+                    print("Failed to get canvas properties")
+                    return False
                     
-            except Exception as e:
-                print(f"Retry {retry_count + 1}/{max_retries}: {str(e)}")
+                print("\nCanvas Properties:")
+                print(json.dumps(result, indent=2))
+                
+        except Exception as e:
+            print(f"\n❌ Canvas verification failed: {str(e)}")
+            return False
             
-            retry_count += 1
-            time.sleep(1)
-            
-        if not result: 
-            print("\n❌ Failed to verify canvas properties after max retries")
-            return False
-        
-        print("\nLive Canvas Properties:")
-        print(json.dumps(result, indent=2))
-        
-        # Verify dimensions
-        dims = result.get('dimensions', {})
-        if dims.get('width') != 1976 or dims.get('height') != 2114:
-            print("\n❌ Canvas dimensions incorrect:")
-            print(f"Expected: 1976x2114")
-            print(f"Got: {dims.get('width')}x{dims.get('height')}")
-            return False
-        
-        # Verify transform matrix
-        transform = result.get('transform', {})
-        expected_transform = "matrix(0.5, 0, 0, 0.5, 0, 0)"
-        if transform.get('computed') != expected_transform:
-            print("\n❌ Transform matrix incorrect:")
-            print(f"Expected: {expected_transform}")
-            print(f"Got: {transform.get('computed')}")
-            return False
-        
-        print("\n✅ Live canvas properties verified successfully")
-        return True
+        finally:
+            driver.quit()
         
     except Exception as e:
         print(f"\n❌ Live verification failed: {str(e)}")
@@ -246,16 +435,18 @@ def main():
     
     # Run all verifications
     live_ok = verify_live_canvas()
+    tiles_ok = verify_tile_completeness()
     static_ok = verify_static_images(output_dir)
     coverage_ok = verify_coverage(corners_dir)
     
     # Print final results
     print("\nVerification Results:")
     print(f"Live Canvas Properties: {'✅' if live_ok else '❌'}")
+    print(f"Tile Completeness: {'✅' if tiles_ok else '❌'}")
     print(f"Static Image Properties: {'✅' if static_ok else '❌'}")
     print(f"Coordinate Coverage: {'✅' if coverage_ok else '❌'}")
     
-    if live_ok and static_ok and coverage_ok:
+    if live_ok and tiles_ok and static_ok and coverage_ok:
         print("\n✅ All verifications passed")
         return 0
     else:

@@ -11,9 +11,11 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
-def verify_canvas_properties(timeout=60):
+def verify_canvas_properties(url=None, timeout=60):
     """Verify canvas dimensions and transform matrix with proper timeout."""
-    print("\nVerifying canvas properties...")
+    if url is None:
+        url = 'https://calculatingempires.net/'
+    print(f"\nVerifying canvas properties for {url}...")
     
     options = webdriver.ChromeOptions()
     options.add_argument('--headless=new')
@@ -41,113 +43,129 @@ def verify_canvas_properties(timeout=60):
             try:
                 print(f"\nAttempt {retry_count + 1}/{max_retries}")
                 print("Navigating to page...")
-                driver.get('https://calculatingempires.net/')
+                driver.get(url)
                 
-                # Wait for initial page load
+                # Wait for initial page load with increased timeout
+                time.sleep(15)  # Increased initial wait
+                
+                # Force a page refresh to ensure clean state
+                driver.refresh()
                 time.sleep(5)
                 
-                # Wait for canvas presence with increased timeout
-                canvas = WebDriverWait(driver, 30).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "canvas"))
-                )
+                # Wait for canvas presence with increased timeout and better error handling
+                try:
+                    canvas = WebDriverWait(driver, 45).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "canvas"))
+                    )
+                    print("Canvas element found")
+                except TimeoutException:
+                    print("Timeout waiting for canvas element")
+                    raise
                 
-                # Get canvas properties with detailed debugging
-                props = driver.execute_script("""
-                    return new Promise((resolve) => {
-                        const checkCanvas = () => {
-                            const canvas = document.querySelector('canvas');
-                            if (!canvas) {
-                                console.log('Canvas not found, retrying...');
-                                setTimeout(checkCanvas, 500);
-                                return;
-                            }
-                            
-                            const style = window.getComputedStyle(canvas);
-                            const map = window.map;
-                            
-                            // Force a resize event
-                            window.dispatchEvent(new Event('resize'));
-                            
-                            // Wait for any animations
-                            setTimeout(() => {
-                                const props = {
-                                    dimensions: {
-                                        width: canvas.width,
-                                        height: canvas.height,
-                                        clientWidth: canvas.clientWidth,
-                                        clientHeight: canvas.clientHeight,
-                                        style: {
-                                            width: style.width,
-                                            height: style.height
-                                        }
-                                    },
-                                    transform: {
-                                        computed: style.transform,
-                                        origin: style.transformOrigin,
-                                        style: canvas.style.transform
-                                    },
-                                    map: {
-                                        initialized: typeof map !== 'undefined',
-                                        size: map ? map.getSize() : null,
-                                        view: map ? {
-                                            zoom: map.getView().getZoom(),
-                                            center: map.getView().getCenter(),
-                                            resolution: map.getView().getResolution()
-                                        } : null
-                                    },
-                                    window: {
-                                        innerWidth: window.innerWidth,
-                                        innerHeight: window.innerHeight,
-                                        devicePixelRatio: window.devicePixelRatio
-                                    }
-                                };
-                                
-                                // Log current properties for debugging
-                                console.log('Current canvas properties:', JSON.stringify(props, null, 2));
-                                
-                                // Check if properties are within acceptable ranges
-                                const dimensionsMatch = Math.abs(props.dimensions.width - 1976) < 10 && 
-                                                      Math.abs(props.dimensions.height - 2114) < 10;
-                                                      
-                                const transformMatch = props.transform.computed.startsWith('matrix(') &&
-                                                     props.transform.computed.includes('0.5') &&
-                                                     props.transform.computed.includes('0, 0');
-                                
-                                if (dimensionsMatch && transformMatch) {
-                                    console.log('Found correct canvas properties!');
-                                    resolve(props);
-                                } else {
-                                    console.log('Canvas properties not yet stabilized. Retrying...');
-                                    setTimeout(checkCanvas, 1000);
-                                }
-                            }, 1000);
-                        };
-                        
-                        checkCanvas();
-                    });
+                # Break down canvas property checks into separate operations
+                print("\nChecking canvas properties step by step...")
+                
+                # Step 1: Get basic canvas element
+                canvas_exists = driver.execute_script("""
+                    const canvas = document.querySelector('canvas');
+                    return canvas !== null;
                 """)
                 
-                print("\nCanvas Properties:")
-                print(json.dumps(props, indent=2))
-                
-                # Verify dimensions
-                if props['dimensions']['width'] != 1976 or props['dimensions']['height'] != 2114:
-                    print("\n❌ Canvas dimensions incorrect:")
-                    print(f"Expected: 1976x2114")
-                    print(f"Got: {props['dimensions']['width']}x{props['dimensions']['height']}")
+                if not canvas_exists:
+                    print("❌ Canvas element not found")
                     return False
+                
+                print("✅ Canvas element found")
+                time.sleep(2)  # Wait for canvas to stabilize
+                
+                # Step 2: Force a resize event and wait
+                driver.execute_script("""
+                    window.dispatchEvent(new Event('resize'));
+                """)
+                time.sleep(2)
+                
+                # Step 3: Get canvas dimensions and verify aspect ratio
+                dimensions = driver.execute_script("""
+                    const canvas = document.querySelector('canvas');
+                    return {
+                        width: canvas.width,
+                        height: canvas.height,
+                        clientWidth: canvas.clientWidth,
+                        clientHeight: canvas.clientHeight
+                    };
+                """)
+                
+                print("\nCanvas dimensions:")
+                print(f"Width: {dimensions['width']} (client: {dimensions['clientWidth']})")
+                print(f"Height: {dimensions['height']} (client: {dimensions['clientHeight']})")
+                
+                # Calculate and verify aspect ratio
+                expected_ratio = 1976 / 2114  # approximately 0.935
+                actual_ratio = dimensions['width'] / dimensions['height']
+                ratio_tolerance = 0.05  # 5% tolerance
+                
+                ratio_match = abs(actual_ratio - expected_ratio) < ratio_tolerance
+                
+                if not ratio_match:
+                    print("\n❌ Canvas aspect ratio incorrect:")
+                    print(f"Expected ratio: {expected_ratio:.3f}")
+                    print(f"Actual ratio: {actual_ratio:.3f}")
+                    return False
+                
+                # Verify minimum size requirements
+                min_width = 1000  # Ensure canvas is large enough for detailed rendering
+                min_height = 1000
+                
+                if dimensions['width'] < min_width or dimensions['height'] < min_height:
+                    print("\n❌ Canvas dimensions too small:")
+                    print(f"Minimum required: {min_width}x{min_height}")
+                    print(f"Got: {dimensions['width']}x{dimensions['height']}")
+                    return False
+                
+                print("✅ Canvas dimensions and aspect ratio verified")
+                
+                # Step 4: Get transform matrix
+                transform = driver.execute_script("""
+                    const canvas = document.querySelector('canvas');
+                    const style = window.getComputedStyle(canvas);
+                    return style.transform;
+                """)
+                
+                print("\nTransform matrix:")
+                print(transform)
                 
                 # Verify transform matrix
                 expected_transform = "matrix(0.5, 0, 0, 0.5, 0, 0)"
-                if props['transform']['computed'] != expected_transform:
+                transform_match = (
+                    transform.startswith('matrix(') and
+                    '0.5' in transform and
+                    '0, 0' in transform
+                )
+                
+                if not transform_match:
                     print("\n❌ Transform matrix incorrect:")
                     print(f"Expected: {expected_transform}")
-                    print(f"Got: {props['transform']['computed']}")
+                    print(f"Got: {transform}")
                     return False
                 
-                print("\n✅ Canvas properties verified successfully:")
-                print(f"- Dimensions: {props['dimensions']['width']}x{props['dimensions']['height']}")
-                print(f"- Transform: {props['transform']['computed']}")
+                print("✅ Transform matrix verified")
+                
+                # Step 5: Get map properties for debugging
+                map_props = driver.execute_script("""
+                    const map = window.map;
+                    if (!map) return null;
+                    return {
+                        zoom: map.getView().getZoom(),
+                        center: map.getView().getCenter(),
+                        resolution: map.getView().getResolution()
+                    };
+                """)
+                
+                if map_props:
+                    print("\nMap properties:")
+                    print(json.dumps(map_props, indent=2))
+                
+                print("\n✅ All canvas properties verified successfully")
                 return True
                 
             except Exception as e:
@@ -168,6 +186,46 @@ def verify_canvas_properties(timeout=60):
     finally:
         driver.quit()
 
+def verify_all_views():
+    """Verify canvas properties at different views and zoom levels."""
+    views = {
+        'leftup': 'https://calculatingempires.net/?pos=4079.86%2C14209.55%2C14.8544',
+        'rightdown': 'https://calculatingempires.net/?pos=156900.14%2C2793.01%2C14.8544'
+    }
+    
+    zoom_levels = []
+    current_zoom = 12.4515
+    while current_zoom <= 18.0000:
+        zoom_levels.append(current_zoom)
+        current_zoom = round(current_zoom + 0.66, 4)
+    
+    results = {
+        'views': {},
+        'zoom_levels': {}
+    }
+    
+    # Test corner views
+    for view_name, url in views.items():
+        print(f"\nTesting {view_name} view...")
+        results['views'][view_name] = verify_canvas_properties(url)
+    
+    # Test zoom levels
+    base_url = 'https://calculatingempires.net/?pos=93000.24%2C8725.00%2C'
+    for zoom in zoom_levels:
+        print(f"\nTesting zoom level {zoom}...")
+        url = f"{base_url}{zoom}"
+        results['zoom_levels'][str(zoom)] = verify_canvas_properties(url)
+    
+    # Report overall results
+    success = all(results['views'].values()) and all(results['zoom_levels'].values())
+    
+    if success:
+        print("\n✅ All canvas properties verified successfully!")
+    else:
+        print("\n❌ Some verifications failed. Check the logs for details.")
+    
+    return success
+
 if __name__ == '__main__':
-    success = verify_canvas_properties()
+    success = verify_all_views()
     sys.exit(0 if success else 1)

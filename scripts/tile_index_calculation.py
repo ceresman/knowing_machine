@@ -70,15 +70,24 @@ class TileCalculator:
         # Calculate tile coordinates using OpenLayers convention
         # X increases from left to right
         tile_x = math.floor((x - self.ORIGIN[0]) / (resolution * self.tile_size))
-        # Y increases from bottom to top in tile coordinates
-        tile_y = math.floor((y - self.ORIGIN[1]) / (resolution * self.tile_size))
-        # Convert to OpenLayers tile Y convention (negative, starting from -1)
-        tile_y = -1 - tile_y
         
-        # Calculate zoom index (0 to 10)
-        normalized = (zoom - 12.4515) / (18.0000 - 12.4515)
+        # Y is inverted in OpenLayers - convert from world coordinates to tile coordinates
+        # First, get Y distance from origin in world coordinates
+        y_dist = y - self.ORIGIN[1]
+        # Convert to pixels
+        y_pixels = y_dist / resolution
+        # Convert to tile index (negative because OpenLayers uses negative Y indices)
+        tile_y = -1 - math.floor(y_pixels / self.tile_size)
+        
+        # Calculate zoom index (0 to 10) for OpenLayers zoom levels
+        normalized = (zoom - self.bounds.min_zoom) / (self.bounds.max_zoom - self.bounds.min_zoom)
         ol_zoom = int(round(normalized * (len(self.RESOLUTIONS) - 1)))
         ol_zoom = max(0, min(len(self.RESOLUTIONS) - 1, ol_zoom))
+        
+        # Ensure tile indices are within valid range
+        max_tile = 2 ** ol_zoom - 1
+        tile_x = max(0, min(tile_x, max_tile))
+        tile_y = max(-max_tile - 1, min(tile_y, -1))
         
         return TileIndex(tile_x, tile_y, ol_zoom)
 
@@ -151,6 +160,14 @@ class TileCalculator:
         """Get the range of tiles needed for a specific zoom level."""
         resolution = self._get_resolution_for_zoom(zoom)
         
+        # Calculate normalized zoom level (0 to 10)
+        normalized = (zoom - self.bounds.min_zoom) / (self.bounds.max_zoom - self.bounds.min_zoom)
+        ol_zoom = int(round(normalized * (len(self.RESOLUTIONS) - 1)))
+        ol_zoom = max(0, min(len(self.RESOLUTIONS) - 1, ol_zoom))
+        
+        # Maximum tile index at this zoom level
+        max_tile = 2 ** ol_zoom - 1
+        
         # Get corner tiles for both TileGrid extent and user-provided corners
         corners = [
             (self.EXTENT[0], self.EXTENT[3]),  # TileGrid top-left
@@ -159,14 +176,20 @@ class TileCalculator:
             (156900.14, 2793.01)               # User bottom-right
         ]
         
-        # Calculate tile indices for all corners
-        tile_indices = [self._coordinates_to_tile(x, y, zoom) for x, y in corners]
+        # Calculate tile indices for all corners with bounds checking
+        tile_indices = []
+        for x, y in corners:
+            tile = self._coordinates_to_tile(x, y, zoom)
+            # Ensure tile indices are within valid range
+            tile_x = max(0, min(tile.x, max_tile))
+            tile_y = max(-max_tile - 1, min(tile.y, -1))
+            tile_indices.append(TileIndex(tile_x, tile_y, ol_zoom))
         
         # Find the extreme tile coordinates
-        min_tile_x = min(tile.x for tile in tile_indices)
-        max_tile_x = max(tile.x for tile in tile_indices)
-        min_tile_y = min(tile.y for tile in tile_indices)
-        max_tile_y = max(tile.y for tile in tile_indices)
+        min_tile_x = max(0, min(tile.x for tile in tile_indices))
+        max_tile_x = min(max_tile, max(tile.x for tile in tile_indices))
+        min_tile_y = max(-max_tile - 1, min(tile.y for tile in tile_indices))
+        max_tile_y = min(-1, max(tile.y for tile in tile_indices))
         
         return Bounds(
             min_x=float(min_tile_x),
