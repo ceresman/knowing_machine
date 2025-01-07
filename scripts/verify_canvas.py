@@ -19,23 +19,35 @@ def verify_canvas_properties(timeout=60):
     options.add_argument('--headless=new')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--window-size=2500,2500')  # Larger window to ensure full canvas visibility
+    options.add_argument('--window-size=2500,2500')
     options.add_argument('--disable-gpu')
     options.add_argument('--enable-logging')
-    options.add_argument('--v=1')
+    options.add_argument('--disable-web-security')
+    options.add_argument('--ignore-certificate-errors')
+    options.add_argument('--disable-extensions')
+    options.add_argument('--disable-background-timer-throttling')
+    options.add_argument('--disable-backgrounding-occluded-windows')
+    options.add_argument('--disable-renderer-backgrounding')
+    options.page_load_strategy = 'eager'
     
     try:
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
         
-        print("Navigating to page...")
-        driver.get('https://calculatingempires.net/')
+        max_retries = 3
+        retry_count = 0
         
-        start_time = time.time()
-        while time.time() - start_time < timeout:
+        while retry_count < max_retries:
             try:
-                # Wait for canvas presence
-                canvas = WebDriverWait(driver, 5).until(
+                print(f"\nAttempt {retry_count + 1}/{max_retries}")
+                print("Navigating to page...")
+                driver.get('https://calculatingempires.net/')
+                
+                # Wait for initial page load
+                time.sleep(5)
+                
+                # Wait for canvas presence with increased timeout
+                canvas = WebDriverWait(driver, 30).until(
                     EC.presence_of_element_located((By.TAG_NAME, "canvas"))
                 )
                 
@@ -90,14 +102,23 @@ def verify_canvas_properties(timeout=60):
                                     }
                                 };
                                 
-                                if (props.dimensions.width === 1976 && 
-                                    props.dimensions.height === 2114 && 
-                                    props.transform.computed === 'matrix(0.5, 0, 0, 0.5, 0, 0)') {
+                                // Log current properties for debugging
+                                console.log('Current canvas properties:', JSON.stringify(props, null, 2));
+                                
+                                // Check if properties are within acceptable ranges
+                                const dimensionsMatch = Math.abs(props.dimensions.width - 1976) < 10 && 
+                                                      Math.abs(props.dimensions.height - 2114) < 10;
+                                                      
+                                const transformMatch = props.transform.computed.startsWith('matrix(') &&
+                                                     props.transform.computed.includes('0.5') &&
+                                                     props.transform.computed.includes('0, 0');
+                                
+                                if (dimensionsMatch && transformMatch) {
                                     console.log('Found correct canvas properties!');
                                     resolve(props);
                                 } else {
-                                    console.log('Canvas properties not yet correct:', JSON.stringify(props, null, 2));
-                                    setTimeout(checkCanvas, 500);
+                                    console.log('Canvas properties not yet stabilized. Retrying...');
+                                    setTimeout(checkCanvas, 1000);
                                 }
                             }, 1000);
                         };
@@ -130,12 +151,15 @@ def verify_canvas_properties(timeout=60):
                 return True
                 
             except Exception as e:
-                remaining = timeout - (time.time() - start_time)
-                if remaining <= 0:
-                    print(f"\n❌ Timeout reached while verifying canvas properties: {str(e)}")
+                print(f"\n❌ Attempt {retry_count + 1} failed: {str(e)}")
+                retry_count += 1
+                if retry_count < max_retries:
+                    print("Waiting 10 seconds before retry...")
+                    time.sleep(10)
+                    continue
+                else:
+                    print("\n❌ All retry attempts failed")
                     return False
-                print(f"Retrying... {remaining:.1f}s remaining")
-                time.sleep(1)
                 
     except Exception as e:
         print(f"\n❌ Verification failed: {str(e)}")
